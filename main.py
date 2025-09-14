@@ -111,10 +111,10 @@ class DopplerDeckBot(commands.Bot):
 
     async def _refresh_presence(self):
         count = self._voice_connection_count()
-        label = f"{count} voice channel{'s' if count != 1 else ''}"
-        activity = disnake.Activity(type=disnake.ActivityType.watching, name=label)
+        label = f"in {count} voice channel{'s' if count != 1 else ''}"
+        activity = disnake.Activity(type=disnake.ActivityType.playing, name=label)
         await self.change_presence(status=disnake.Status.online, activity=activity)
-        log.debug("Presence updated: watching %s", label)
+        log.debug("Presence updated: playing %s", label)
 
     @tasks.loop(seconds=20)
     async def update_presence(self):
