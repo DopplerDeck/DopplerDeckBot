@@ -3,6 +3,7 @@ import logging
 import disnake
 from disnake.ext import commands, tasks
 from lavalink import ensure_lavalink, NODE_CONFIG
+from database import RestrictionDB
 
 try:
     import tomllib as toml
@@ -66,6 +67,13 @@ class DopplerDeckBot(commands.Bot):
 
     async def on_ready(self):
         log.info("Logged in as %s (%s) — in %d guild(s).", str(self.user), self.user.id if self.user else "unknown", len(self.guilds))
+        
+        try:
+            db = RestrictionDB()
+            log.info("Database initialized successfully")
+        except Exception as exc:
+            log.error("Database initialization failed: %r", exc)
+        
         if not self._presence_started:
             self.update_presence.start()
             self._presence_started = True
