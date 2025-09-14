@@ -44,7 +44,7 @@ This project is licensed under the [MIT License](./LICENSE).
 ## 🤖 Built With
 
 - [Lavalink](https://github.com/freyacodes/Lavalink)
-- Node.js or Python (add yours here)
+- Python
 
 ---
 
