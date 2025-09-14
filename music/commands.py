@@ -13,6 +13,7 @@ except ModuleNotFoundError:
     import tomli as toml
 
 from lavalink import ensure_lavalink
+from database import RestrictionDB
 
 CONFIG_PATH = "config.toml"
 
@@ -81,6 +82,7 @@ class Music(commands.Cog):
         self._current_req: Dict[int, Optional[int]] = {}
         self._last: Dict[int, Optional[mafic.Track]] = {}
         self._synced = False
+        self.db = RestrictionDB()
 
     async def _ensure_node(self):
         if self.node is None:
@@ -89,6 +91,12 @@ class Music(commands.Cog):
     def _author_channel(self, author: disnake.Member) -> Optional[disnake.VoiceChannel]:
         vs = getattr(author, "voice", None)
         return getattr(vs, "channel", None)
+    
+    def _check_restriction(self, guild: disnake.Guild, channel: disnake.VoiceChannel) -> bool:
+        if not self.db.has_restriction(guild.id):
+            return True
+        restricted_channel_id = self.db.get_restriction(guild.id)
+        return channel.id == restricted_channel_id
 
     def _get_player(self, guild: disnake.Guild) -> Optional[mafic.Player]:
         return self._players.get(guild.id)
@@ -146,6 +154,11 @@ class Music(commands.Cog):
         self._current[gid] = track
         self._current_req[gid] = requester_id
         self._last[gid] = track
+        try:
+            embed = self._now_playing_embed(player.guild)
+            await channel.send(embed=embed)
+        except Exception as e:
+            print(f"Failed to send now playing message: {e}")
 
     async def _play_next_or_autoplay(self, player: mafic.Player):
         gid = player.guild.id
@@ -289,6 +302,20 @@ class Music(commands.Cog):
                 )
             )
             return
+        
+        if not self._check_restriction(ctx.guild, ch):
+            restricted_channel_id = self.db.get_restriction(ctx.guild.id)
+            restricted_channel = ctx.guild.get_channel(restricted_channel_id)
+            channel_name = restricted_channel.name if restricted_channel else "Unknown Channel"
+            await ctx.send(
+                embed=disnake.Embed(
+                    title="Error!",
+                    description=f"The bot is restricted to {channel_name}. Please join that channel or use `>utils restrict` to change the restriction.",
+                    color=self.color,
+                )
+            )
+            return
+        
         await self._connect(ctx.guild, ch)
         await ctx.send(
             embed=disnake.Embed(
@@ -319,6 +346,20 @@ class Music(commands.Cog):
                     )
                 )
                 return
+            
+            if not self._check_restriction(ctx.guild, ch):
+                restricted_channel_id = self.db.get_restriction(ctx.guild.id)
+                restricted_channel = ctx.guild.get_channel(restricted_channel_id)
+                channel_name = restricted_channel.name if restricted_channel else "Unknown Channel"
+                await ctx.send(
+                    embed=disnake.Embed(
+                        title="Error!",
+                        description=f"The bot is restricted to {channel_name}. Please join that channel or use `>utils restrict` to change the restriction.",
+                        color=self.color,
+                    )
+                )
+                return
+            
             await self._connect(ctx.guild, ch)
             player = self._get_player(ctx.guild)
         try:
@@ -481,6 +522,21 @@ class Music(commands.Cog):
                 ephemeral=True,
             )
             return
+        
+        if not self._check_restriction(inter.guild, ch):
+            restricted_channel_id = self.db.get_restriction(inter.guild.id)
+            restricted_channel = inter.guild.get_channel(restricted_channel_id)
+            channel_name = restricted_channel.name if restricted_channel else "Unknown Channel"
+            await inter.response.send_message(
+                embed=disnake.Embed(
+                    title="Error!",
+                    description=f"The bot is restricted to {channel_name}. Please join that channel or use `/utils restrict` to change the restriction.",
+                    color=self.color,
+                ),
+                ephemeral=True,
+            )
+            return
+        
         await self._connect(inter.guild, ch)
         await inter.response.send_message(
             embed=disnake.Embed(
@@ -520,6 +576,21 @@ class Music(commands.Cog):
                     ephemeral=True,
                 )
                 return
+            
+            if not self._check_restriction(inter.guild, ch):
+                restricted_channel_id = self.db.get_restriction(inter.guild.id)
+                restricted_channel = inter.guild.get_channel(restricted_channel_id)
+                channel_name = restricted_channel.name if restricted_channel else "Unknown Channel"
+                await inter.response.send_message(
+                    embed=disnake.Embed(
+                        title="Error!",
+                        description=f"The bot is restricted to {channel_name}. Please join that channel or use `/utils restrict` to change the restriction.",
+                        color=self.color,
+                    ),
+                    ephemeral=True,
+                )
+                return
+            
             await self._connect(inter.guild, ch)
             player = self._get_player(inter.guild)
         try:
