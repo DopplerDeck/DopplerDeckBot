@@ -6,7 +6,7 @@ NODE_CONFIG = {
     "password": "", # lavalink password
     "host": "", # lavalink link
     "port": , # lavalink port
-    "secure": False, # Set to True Or False
+    "secure": False, # Set to True Or False ( Probably False for most cases )
 }
 
 _pool: mafic.NodePool | None = None
@@ -28,3 +28,4 @@ async def ensure_lavalink(client) -> mafic.Node:
             secure=NODE_CONFIG["secure"],
         )
         return _node
+
