@@ -83,6 +83,7 @@ class Music(commands.Cog):
         self._last: Dict[int, Optional[mafic.Track]] = {}
         self._synced = False
         self.db = RestrictionDB()
+        self._last_text_channel: Dict[int, Optional[disnake.TextChannel]] = {}
 
     async def _ensure_node(self):
         if self.node is None:
@@ -130,6 +131,7 @@ class Music(commands.Cog):
         self._current.pop(guild.id, None)
         self._current_req.pop(guild.id, None)
         self._last.pop(guild.id, None)
+        self._last_text_channel.pop(guild.id, None)
 
     async def _check_empty_and_leave(self, guild: disnake.Guild):
         chan_id = self._vc_map.get(guild.id)
@@ -148,7 +150,7 @@ class Music(commands.Cog):
         q.append(QItem(track=track, requester_id=requester_id))
         return len(q)
 
-    async def _play_track(self, player: mafic.Player, track: mafic.Track, requester_id: Optional[int] = None):
+    async def _play_track(self, player: mafic.Player, track: mafic.Track, text_channel, requester_id: Optional[int] = None):
         gid = player.guild.id
         await player.play(track, start_time=0)
         self._current[gid] = track
@@ -156,7 +158,7 @@ class Music(commands.Cog):
         self._last[gid] = track
         try:
             embed = self._now_playing_embed(player.guild)
-            await channel.send(embed=embed)
+            await text_channel.send(embed=embed)
         except Exception as e:
             print(f"Failed to send now playing message: {e}")
 
@@ -165,7 +167,7 @@ class Music(commands.Cog):
         q = self._queues.get(gid)
         if q and len(q) > 0:
             item = q.popleft()
-            await self._play_track(player, item.track, item.requester_id)
+            await self._play_track(player, item.track, self._last_text_channel.get(gid), item.requester_id)
             return
         seed = self._last.get(gid)
         ident = getattr(seed, "identifier", None)
@@ -178,16 +180,16 @@ class Music(commands.Cog):
             if isinstance(results, mafic.Playlist) and results.tracks:
                 for t in results.tracks:
                     if getattr(t, "identifier", None) != ident:
-                        await self._play_track(player, t, None)
+                        await self._play_track(player, t, self._last_text_channel.get(gid), None)
                         return
         self._current.pop(gid, None)
         self._current_req.pop(gid, None)
 
     def _mention(self, guild: disnake.Guild, user_id: Optional[int]) -> str:
         if user_id is None:
-            return "Autoplay"
+            return "auto-play"
         m = guild.get_member(user_id)
-        return m.mention if m else f"<@{user_id}>"
+        return m.name if m else f"User {user_id}"
 
     def _progress_bar(self, pos_ms: int, length_ms: Optional[int], width: int = 12) -> str:
         if not length_ms or length_ms <= 0:
@@ -228,7 +230,7 @@ class Music(commands.Cog):
         emb.add_field(name="Source", value=_source_name(getattr(track, "uri", None)), inline=True)
         emb.add_field(name="Progress", value=f"`{bar}`\n`{prog_txt}`", inline=False)
         rq = self._mention(guild, self._current_req.get(guild.id))
-        emb.set_footer(text=f"Requested by {rq}")
+        emb.set_footer(text=f"Requested by {rq}.")
         q = list(self._queues.get(guild.id, deque()))
         if q:
             preview = []
@@ -335,6 +337,8 @@ class Music(commands.Cog):
     @music_group.command(name="play")
     async def play_prefix(self, ctx: commands.Context, *, query: str):
         player = self._get_player(ctx.guild)
+        gid = ctx.guild.id
+        self._last_text_channel[gid] = ctx.channel
         if not player:
             ch = self._author_channel(ctx.author)
             if not ch:
@@ -403,8 +407,7 @@ class Music(commands.Cog):
             emb.add_field(name="Position", value=f"#{pos}", inline=True)
             await ctx.send(embed=emb)
         else:
-            await self._play_track(player, track, getattr(ctx.author, "id", None))
-            await ctx.send(embed=self._now_playing_embed(ctx.guild))
+            await self._play_track(player, track, ctx.channel, getattr(ctx.author, "id", None))
 
     @music_group.command(name="skip")
     async def skip_prefix(self, ctx: commands.Context):
@@ -564,6 +567,8 @@ class Music(commands.Cog):
             )
             return
         player = self._get_player(inter.guild)
+        gid = inter.guild.id
+        self._last_text_channel[gid] = inter.channel
         if not player:
             ch = self._author_channel(inter.author)
             if not ch:
@@ -636,8 +641,7 @@ class Music(commands.Cog):
             emb.add_field(name="Position", value=f"#{pos}", inline=True)
             await inter.response.send_message(embed=emb)
         else:
-            await self._play_track(player, track, getattr(inter.author, "id", None))
-            await inter.response.send_message(embed=self._now_playing_embed(inter.guild))
+            await self._play_track(player, track, inter.channel, getattr(inter.author, "id", None))
 
     @music_slash.sub_command(name="skip", description="Skip the current track")
     async def skip_slash(self, inter: disnake.ApplicationCommandInteraction):
