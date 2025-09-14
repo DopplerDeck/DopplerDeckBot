@@ -381,7 +381,17 @@ class Music(commands.Cog):
         if results is None:
             pass
         elif isinstance(results, mafic.Playlist) and results.tracks:
-            track = results.tracks[0]
+            tracks = results.tracks[:20]
+            for t in tracks:
+                self._enqueue(ctx.guild.id, t, getattr(ctx.author, "id", None))
+            track = tracks[0]
+            await ctx.send(
+                embed=disnake.Embed(
+                    title="Playlist Queued",
+                    description=f"Added {len(tracks)} tracks from playlist '{results.name}' (max 20).",
+                    color=self.color,
+                )
+            )
         elif isinstance(results, list) and results:
             track = results[0]
         if not track:
@@ -614,7 +624,18 @@ class Music(commands.Cog):
         if results is None:
             pass
         elif isinstance(results, mafic.Playlist) and results.tracks:
-            track = results.tracks[0]
+            tracks = results.tracks[:20]
+            for t in tracks:
+                self._enqueue(inter.guild.id, t, getattr(inter.author, "id", None))
+            track = tracks[0]
+            await inter.response.send_message(
+                embed=disnake.Embed(
+                    title="Playlist Queued",
+                    description=f"Added {len(tracks)} tracks from playlist '{results.name}' (max 20).",
+                    color=self.color,
+                ),
+                ephemeral=True,
+            )
         elif isinstance(results, list) and results:
             track = results[0]
         if not track:
