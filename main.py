@@ -133,7 +133,8 @@ def main():
         command_prefix=">",
         intents=intents,
         allowed_mentions=disnake.AllowedMentions.none(),
-        command_sync_flags=commands.CommandSyncFlags.default()
+        command_sync_flags=commands.CommandSyncFlags.default(),
+        help_command=None
     )
 
     def is_owner_ctx(ctx):
