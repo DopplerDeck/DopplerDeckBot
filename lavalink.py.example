@@ -1,0 +1,30 @@
+import asyncio
+import mafic
+
+NODE_CONFIG = {
+    "identifier": "", # lavalink identifier
+    "password": "", # lavalink password
+    "host": "", # lavalink link
+    "port": , # lavalink port
+    "secure": False, # Set to True Or False
+}
+
+_pool: mafic.NodePool | None = None
+_node: mafic.Node | None = None
+_lock = asyncio.Lock()
+
+async def ensure_lavalink(client) -> mafic.Node:
+    global _pool, _node
+    async with _lock:
+        if _node is not None:
+            return _node
+        if _pool is None:
+            _pool = mafic.NodePool(client)
+        _node = await _pool.create_node(
+            host=NODE_CONFIG["host"],
+            port=NODE_CONFIG["port"],
+            label=NODE_CONFIG["identifier"],
+            password=NODE_CONFIG["password"],
+            secure=NODE_CONFIG["secure"],
+        )
+        return _node

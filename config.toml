@@ -1,0 +1,4 @@
+"embed color" = 0x08bc6e8 # feel free to customize ( #L184 in main.py has it manually set can't be bothered to change )
+
+[cogs]
+modules = ["music.commands", "utils.commands"]  
