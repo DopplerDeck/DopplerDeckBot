@@ -2,3 +2,4 @@
 lavalink
 mafic
 python-dotenv
+mysql-connector-python
