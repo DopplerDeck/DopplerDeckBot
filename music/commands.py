@@ -73,6 +73,27 @@ def _is_spotify_url(s: str) -> bool:
         return False
 
 
+def _is_spotify_track(track: mafic.Track) -> bool:
+    uri = getattr(track, "uri", None) or ""
+    try:
+        host = urlparse(uri).netloc.lower()
+    except Exception:
+        host = ""
+    return "spotify.com" in host or uri.startswith("spotify:")
+
+
+def _yt_search_query_from_track(track: mafic.Track) -> Optional[str]:
+    title = getattr(track, "title", None)
+    author = getattr(track, "author", None)
+    if not title:
+        return None
+    clean_title = title.replace(" - Single", "").replace(" - EP", "").strip()
+    parts = [clean_title]
+    if author and author.lower() != "unknown":
+        parts.append(author)
+    return " ".join(parts)
+
+
 class QItem(NamedTuple):
     track: mafic.Track
     requester_id: Optional[int] = None
@@ -175,11 +196,35 @@ class Music(commands.Cog):
     async def _play_next_or_autoplay(self, player: mafic.Player):
         gid = player.guild.id
         q = self._queues.get(gid)
+
         if q and len(q) > 0:
             item = q.popleft()
             await self._play_track(player, item.track, self._last_text_channel.get(gid), item.requester_id)
             return
+
         seed = self._last.get(gid)
+        if not seed:
+            self._current.pop(gid, None)
+            self._current_req.pop(gid, None)
+            return
+
+        if _is_spotify_track(seed):
+            query = _yt_search_query_from_track(seed)
+            if query:
+                try:
+                    yt_results = await player.fetch_tracks(query, search_type=mafic.SearchType.YOUTUBE)
+                except Exception:
+                    yt_results = None
+
+                if isinstance(yt_results, list) and yt_results:
+                    yt_track = yt_results[0]
+                    await self._play_track(player, yt_track, self._last_text_channel.get(gid), None)
+                    return
+
+            self._current.pop(gid, None)
+            self._current_req.pop(gid, None)
+            return
+
         ident = getattr(seed, "identifier", None)
         if ident:
             url = f"https://www.youtube.com/watch?v={ident}&list=RD{ident}"
@@ -187,11 +232,13 @@ class Music(commands.Cog):
                 results = await player.fetch_tracks(url, search_type=mafic.SearchType.YOUTUBE)
             except Exception:
                 results = None
+
             if isinstance(results, mafic.Playlist) and results.tracks:
                 for t in results.tracks:
                     if getattr(t, "identifier", None) != ident:
                         await self._play_track(player, t, self._last_text_channel.get(gid), None)
                         return
+
         self._current.pop(gid, None)
         self._current_req.pop(gid, None)
 
