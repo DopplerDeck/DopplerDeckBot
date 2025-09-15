@@ -84,6 +84,7 @@ class Music(commands.Cog):
         self._synced = False
         self.db = RestrictionDB()
         self._last_text_channel: Dict[int, Optional[disnake.TextChannel]] = {}
+        self._stopped: Dict[int, bool] = {}
 
     async def _ensure_node(self):
         if self.node is None:
@@ -132,6 +133,7 @@ class Music(commands.Cog):
         self._current_req.pop(guild.id, None)
         self._last.pop(guild.id, None)
         self._last_text_channel.pop(guild.id, None)
+        self._stopped.pop(guild.id, None)
 
     async def _check_empty_and_leave(self, guild: disnake.Guild):
         chan_id = self._vc_map.get(guild.id)
@@ -418,6 +420,7 @@ class Music(commands.Cog):
             await ctx.send(embed=emb)
         else:
             await self._play_track(player, track, ctx.channel, getattr(ctx.author, "id", None))
+        self._stopped[ctx.guild.id] = False
 
     @music_group.command(name="skip")
     async def skip_prefix(self, ctx: commands.Context):
@@ -501,6 +504,7 @@ class Music(commands.Cog):
             return
         await player.stop()
         self._queues.get(ctx.guild.id, deque()).clear()
+        self._stopped[ctx.guild.id] = True
         await ctx.send(
             embed=disnake.Embed(
                 title="Stopped",
@@ -663,6 +667,7 @@ class Music(commands.Cog):
             await inter.response.send_message(embed=emb)
         else:
             await self._play_track(player, track, inter.channel, getattr(inter.author, "id", None))
+        self._stopped[inter.guild.id] = False
 
     @music_slash.sub_command(name="skip", description="Skip the current track")
     async def skip_slash(self, inter: disnake.ApplicationCommandInteraction):
@@ -750,6 +755,7 @@ class Music(commands.Cog):
             return
         await player.stop()
         self._queues.get(inter.guild.id, deque()).clear()
+        self._stopped[inter.guild.id] = True
         await inter.response.send_message(
             embed=disnake.Embed(
                 title="Stopped",
@@ -761,6 +767,9 @@ class Music(commands.Cog):
 
     @commands.Cog.listener()
     async def on_track_end(self, event):
+        guild_id = event.player.guild.id
+        if self._stopped.get(guild_id):
+            return
         await self._play_next_or_autoplay(event.player)
 
     @commands.Cog.listener()
