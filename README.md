@@ -28,10 +28,10 @@ Perfect for users who want a no-nonsense music solution for their server.
 
 ## 🛠️ Getting Started
 
-Invite the bot and you're good to go!
-For developers, set database details in database.py
-Set lavalink details in lavalink.py
-Set token in .env
+- Invite the bot and you're good to go!
+- For developers, set database details in database.py
+- Set lavalink details in lavalink.py
+- Set token in .env
 
 ---
 
@@ -44,7 +44,7 @@ This project is licensed under the [MIT License](./LICENSE).
 ## 🤖 Built With
 
 - [Lavalink](https://github.com/freyacodes/Lavalink)
-- Python
+- [Python](https://www.python.org/) [Disnake](https://docs.disnake.dev/en/stable/)
 
 ---
 
