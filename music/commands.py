@@ -65,6 +65,14 @@ def _source_name(uri: Optional[str]) -> str:
     return host or "Unknown"
 
 
+def _is_spotify_url(s: str) -> bool:
+    try:
+        host = urlparse(s).netloc.lower()
+        return "spotify.com" in host or s.startswith("spotify:")
+    except Exception:
+        return False
+
+
 class QItem(NamedTuple):
     track: mafic.Track
     requester_id: Optional[int] = None
@@ -369,7 +377,11 @@ class Music(commands.Cog):
             await self._connect(ctx.guild, ch)
             player = self._get_player(ctx.guild)
         try:
-            results = await player.fetch_tracks(query, search_type=mafic.SearchType.YOUTUBE)
+            is_spotify = _is_spotify_url(query)
+            if is_spotify:
+                results = await player.fetch_tracks(query, search_type=None)
+            else:
+                results = await player.fetch_tracks(query, search_type=mafic.SearchType.YOUTUBE)
         except Exception as e:
             await ctx.send(
                 embed=disnake.Embed(
@@ -613,7 +625,11 @@ class Music(commands.Cog):
             await self._connect(inter.guild, ch)
             player = self._get_player(inter.guild)
         try:
-            results = await player.fetch_tracks(query, search_type=mafic.SearchType.YOUTUBE)
+            is_spotify = _is_spotify_url(query)
+            if is_spotify:
+                results = await player.fetch_tracks(query, search_type=None)
+            else:
+                results = await player.fetch_tracks(query, search_type=mafic.SearchType.YOUTUBE)
         except Exception as e:
             await inter.response.send_message(
                 embed=disnake.Embed(
