@@ -270,9 +270,8 @@ class Music(commands.Cog):
         length = getattr(track, "length", None)
         prog_txt = f"{_fmt_ms(pos)} / {_fmt_ms(length)}"
         bar = self._progress_bar(pos, length)
-        status = "⏸️" if getattr(player, "paused", False) else "▶️"
         emb = disnake.Embed(
-            title=f"{status} Now Playing",
+            title=f"Now Playing",
             description=_track_link_line(track),
             color=self.color,
             timestamp=dt.datetime.utcnow(),
@@ -874,3 +873,4 @@ class Music(commands.Cog):
 
 def setup(bot):
     bot.add_cog(Music(bot))
+
