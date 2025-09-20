@@ -6,11 +6,13 @@ from disnake.ext import commands
 from typing import Optional, Deque, Dict, List, NamedTuple
 from collections import deque
 from urllib.parse import urlparse
-
+import os
+import subprocess
 try:
     import tomllib as toml
 except ModuleNotFoundError:
     import tomli as toml
+
 
 from lavalink import ensure_lavalink
 from database import RestrictionDB
@@ -27,7 +29,18 @@ RADIO_STATIONS = {
         "name": "Heart UK",
         "url": "https://media-ice.musicradio.com/HeartUK",
         "description": "More music variety"
-    }
+    },
+    "truckers fm": {
+        "name": "Truckers FM",
+        "url": "https://live.truckers.fm/",
+        "description": "Music for truckers and road enthusiasts"
+    },
+    "lbc london": {
+        "name": "LBC London",
+        "url": "https://ice-sov.musicradio.com/LBCLondonHD?hdauth=:2000000000:a290d4b39a16153061d4c743008b9fe8d424a7e5ec6469d40acf51fdcd336e80",
+        "description": "London's biggest conversation"
+    },
+
 }
 
 
@@ -111,6 +124,9 @@ def _yt_search_query_from_track(track: mafic.Track) -> Optional[str]:
     return " ".join(parts)
 
 
+
+
+
 class QItem(NamedTuple):
     track: mafic.Track
     requester_id: Optional[int] = None
@@ -131,6 +147,7 @@ class Music(commands.Cog):
         self.db = RestrictionDB()
         self._last_text_channel: Dict[int, Optional[disnake.TextChannel]] = {}
         self._stopped: Dict[int, bool] = {}
+        self._intro_played: Dict[int, bool] = {}
 
     async def _ensure_node(self):
         if self.node is None:
@@ -180,6 +197,7 @@ class Music(commands.Cog):
         self._last.pop(guild.id, None)
         self._last_text_channel.pop(guild.id, None)
         self._stopped.pop(guild.id, None)
+        self._intro_played.pop(guild.id, None)
 
     async def _check_empty_and_leave(self, guild: disnake.Guild):
         chan_id = self._vc_map.get(guild.id)
@@ -197,6 +215,44 @@ class Music(commands.Cog):
         q = self._queues.setdefault(guild_id, deque())
         q.append(QItem(track=track, requester_id=requester_id))
         return len(q)
+
+    async def _play_intro_disnake(self, channel: disnake.VoiceChannel):
+        intro_file = os.getenv("INTRO_FILE", "botintro.wav")
+        if not os.path.exists(intro_file):
+            print(f"[intro] File not found: {intro_file}")
+            return
+
+        # 1) Connect natively (NOT Lavalink)
+        vc: disnake.VoiceClient = await channel.connect()
+        try:
+            src = disnake.FFmpegPCMAudio(
+                intro_file,
+                before_options="-nostdin",
+                options="-vn -ac 2 -ar 48000"
+            )
+            vc.play(disnake.PCMVolumeTransformer(src, volume=1.0))
+
+            # Wait until done or 10s max
+            for _ in range(100):
+                if not vc.is_playing():
+                    break
+                await asyncio.sleep(0.1)
+        finally:
+            try:
+                await vc.disconnect(force=True)
+            except Exception:
+                pass
+
+        # 2) Cool-down: give Discord time to release the old voice session
+        await asyncio.sleep(0.5)
+
+        # 3) Extra safety: wait until guild.voice_client is really None
+        for _ in range(20):  # up to ~2s
+            if channel.guild.voice_client is None:
+                break
+            await asyncio.sleep(0.1)
+
+
 
     async def _play_track(self, player: mafic.Player, track: mafic.Track, text_channel, requester_id: Optional[int] = None):
         gid = player.guild.id
@@ -292,11 +348,14 @@ class Music(commands.Cog):
         art = _art_url(track)
         if art:
             emb.set_thumbnail(url=art)
-        emb.add_field(name="Artist", value=getattr(track, "author", "Unknown"), inline=True)
+        uri = getattr(track, "uri", None)
+        is_radio = uri and ("ice-sov.musicradio.com" in uri or "media-ice.musicradio.com" in uri or "globalplayer.com" in uri)
+        if not is_radio:
+            emb.add_field(name="Artist", value=getattr(track, "author", "Unknown"), inline=True)
         vol = getattr(player, "volume", None)
         if vol is not None:
             emb.add_field(name="Volume", value=f"{vol}%", inline=True)
-        emb.add_field(name="Source", value=_source_name(getattr(track, "uri", None)), inline=True)
+        emb.add_field(name="Source", value=_source_name(uri), inline=True)
         rq = self._mention(guild, self._current_req.get(guild.id))
         emb.set_footer(text=f"Requested by {rq}.")
         q = list(self._queues.get(guild.id, deque()))
@@ -418,7 +477,7 @@ class Music(commands.Cog):
                     )
                 )
                 return
-            
+
             if not self._check_restriction(ctx.guild, ch):
                 restricted_channel_id = self.db.get_restriction(ctx.guild.id)
                 restricted_channel = ctx.guild.get_channel(restricted_channel_id)
@@ -431,8 +490,25 @@ class Music(commands.Cog):
                     )
                 )
                 return
-            
-            await self._connect(ctx.guild, ch)
+
+            gid = ctx.guild.id
+            if not self._intro_played.get(gid, False):
+                try:
+                    await self._play_intro_disnake(ch)
+                except Exception as e:
+                    print(f"[intro] local intro failed (music prefix): {e}")
+                finally:
+                    self._intro_played[gid] = True
+
+            # ensure a native VC isn't lingering
+            if ctx.guild.voice_client and ctx.guild.voice_client.__class__.__name__ == "VoiceClient":
+                try:
+                    await ctx.guild.voice_client.disconnect(force=True)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.3)
+
+            await self._connect(ctx.guild, ch)  # Lavalink connect (mafic)
             player = self._get_player(ctx.guild)
         try:
             is_spotify = _is_spotify_url(query)
@@ -665,7 +741,7 @@ class Music(commands.Cog):
                     ephemeral=True,
                 )
                 return
-            
+
             if not self._check_restriction(inter.guild, ch):
                 restricted_channel_id = self.db.get_restriction(inter.guild.id)
                 restricted_channel = inter.guild.get_channel(restricted_channel_id)
@@ -679,8 +755,25 @@ class Music(commands.Cog):
                     ephemeral=True,
                 )
                 return
-            
-            await self._connect(inter.guild, ch)
+
+            gid = inter.guild.id
+            if not self._intro_played.get(gid, False):
+                try:
+                    await self._play_intro_disnake(ch)
+                except Exception as e:
+                    print(f"[intro] local intro failed (music slash): {e}")
+                finally:
+                    self._intro_played[gid] = True
+
+            # ensure a native VC isn't lingering
+            if inter.guild.voice_client and inter.guild.voice_client.__class__.__name__ == "VoiceClient":
+                try:
+                    await inter.guild.voice_client.disconnect(force=True)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.3)
+
+            await self._connect(inter.guild, ch)  # Lavalink connect (mafic)
             player = self._get_player(inter.guild)
         try:
             is_spotify = _is_spotify_url(query)
@@ -919,7 +1012,7 @@ class Music(commands.Cog):
                     )
                 )
                 return
-            
+
             if not self._check_restriction(ctx.guild, ch):
                 restricted_channel_id = self.db.get_restriction(ctx.guild.id)
                 restricted_channel = ctx.guild.get_channel(restricted_channel_id)
@@ -932,7 +1025,24 @@ class Music(commands.Cog):
                     )
                 )
                 return
-            
+
+            gid = ctx.guild.id
+            if not self._intro_played.get(gid, False):
+                try:
+                    await self._play_intro_disnake(ch)
+                except Exception as e:
+                    print(f"[intro] local intro failed: {e}")
+                finally:
+                    self._intro_played[gid] = True
+
+            # ensure we're not still connected with a native VC
+            if ctx.guild.voice_client and ctx.guild.voice_client.__class__.__name__ == "VoiceClient":
+                try:
+                    await ctx.guild.voice_client.disconnect(force=True)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.3)
+
             await self._connect(ctx.guild, ch)
             player = self._get_player(ctx.guild)
         
@@ -941,13 +1051,23 @@ class Music(commands.Cog):
             results = await player.fetch_tracks(station_info["url"])
             if isinstance(results, list) and results:
                 track = results[0]
+                gid = ctx.guild.id
+
                 await player.set_volume(0)
                 await player.play(track, start_time=0)
-                self._current[ctx.guild.id] = track
-                self._current_req[ctx.guild.id] = getattr(ctx.author, "id", None)
-                self._last[ctx.guild.id] = track
-                await asyncio.sleep(5)
-                await player.set_volume(100)
+                self._current[gid] = track
+                self._current_req[gid] = getattr(ctx.author, "id", None)
+                self._last[gid] = track
+
+                try:
+                    await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    return
+
+                for vol in (20, 40, 60, 80, 100):
+                    await player.set_volume(vol)
+                    await asyncio.sleep(0.12)
+
                 await ctx.send(
                     embed=disnake.Embed(
                         title="Now Playing Radio",
@@ -1038,6 +1158,23 @@ class Music(commands.Cog):
                 )
                 return
             
+            gid = inter.guild.id
+            if not self._intro_played.get(gid, False):
+                try:
+                    await self._play_intro_disnake(ch)
+                except Exception as e:
+                    print(f"[intro] local intro failed (slash): {e}")
+                finally:
+                    self._intro_played[gid] = True
+
+            # ensure we're not still connected with a native VC
+            if inter.guild.voice_client and inter.guild.voice_client.__class__.__name__ == "VoiceClient":
+                try:
+                    await inter.guild.voice_client.disconnect(force=True)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.3)
+
             await self._connect(inter.guild, ch)
             player = self._get_player(inter.guild)
         
@@ -1046,13 +1183,23 @@ class Music(commands.Cog):
             results = await player.fetch_tracks(station_info["url"])
             if isinstance(results, list) and results:
                 track = results[0]
+                gid = inter.guild.id
+
                 await player.set_volume(0)
                 await player.play(track, start_time=0)
-                self._current[inter.guild.id] = track
-                self._current_req[inter.guild.id] = getattr(inter.author, "id", None)
-                self._last[inter.guild.id] = track
-                await asyncio.sleep(5)
-                await player.set_volume(100)
+                self._current[gid] = track
+                self._current_req[gid] = getattr(inter.author, "id", None)
+                self._last[gid] = track
+
+                try:
+                    await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    return
+
+                for vol in (20, 40, 60, 80, 100):
+                    await player.set_volume(vol)
+                    await asyncio.sleep(0.12)
+
                 await inter.response.send_message(
                     embed=disnake.Embed(
                         title="Now Playing Radio",
