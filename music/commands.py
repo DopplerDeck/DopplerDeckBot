@@ -17,6 +17,19 @@ from database import RestrictionDB
 
 CONFIG_PATH = "config.toml"
 
+RADIO_STATIONS = {
+    "capital xtra": {
+        "name": "Capital Xtra",
+        "url": "https://ice-sov.musicradio.com/CapitalXTRANationalHD?hdauth=:2000000000:a290d4b39a16153061d4c743008b9fe8d424a7e5ec6469d40acf51fdcd336e80",
+        "description": "UK's biggest hip hop and R&B station"
+    },
+    "heart uk": {
+        "name": "Heart UK",
+        "url": "https://media-ice.musicradio.com/HeartUK",
+        "description": "More music variety"
+    }
+}
+
 
 def _load_color() -> int:
     with open(CONFIG_PATH, "rb") as f:
@@ -49,6 +62,8 @@ def _track_link_line(track: mafic.Track) -> str:
     uri = getattr(track, "uri", None)
     title = getattr(track, "title", "Unknown title")
     author = getattr(track, "author", "Unknown")
+    if uri and ("globalplayer.com" in uri or "ice-sov.musicradio.com" in uri or "media-ice.musicradio.com" in uri):
+        return f"**{title}** by **{author}**"
     return f"[{title}]({uri}) by **{author}**" if uri else f"**{title}** by **{author}**"
 
 
@@ -62,6 +77,8 @@ def _source_name(uri: Optional[str]) -> str:
         return "SoundCloud"
     if "spotify" in host:
         return "Spotify"
+    if "globalplayer.com" in host or "ice-sov.musicradio.com" in host or "media-ice.musicradio.com" in host:
+        return "Global Player"
     return host or "Unknown"
 
 
@@ -266,10 +283,6 @@ class Music(commands.Cog):
                 color=self.color,
                 timestamp=dt.datetime.utcnow(),
             )
-        pos = getattr(player, "position", 0) if player else 0
-        length = getattr(track, "length", None)
-        prog_txt = f"{_fmt_ms(pos)} / {_fmt_ms(length)}"
-        bar = self._progress_bar(pos, length)
         emb = disnake.Embed(
             title=f"Now Playing",
             description=_track_link_line(track),
@@ -284,7 +297,6 @@ class Music(commands.Cog):
         if vol is not None:
             emb.add_field(name="Volume", value=f"{vol}%", inline=True)
         emb.add_field(name="Source", value=_source_name(getattr(track, "uri", None)), inline=True)
-        emb.add_field(name="Progress", value=f"`{bar}`\n`{prog_txt}`", inline=False)
         rq = self._mention(guild, self._current_req.get(guild.id))
         emb.set_footer(text=f"Requested by {rq}.")
         q = list(self._queues.get(guild.id, deque()))
@@ -860,6 +872,213 @@ class Music(commands.Cog):
         ):
             await self._check_empty_and_leave(member.guild)
 
+    @commands.group(name="radio", invoke_without_command=True)
+    async def radio_group(self, ctx: commands.Context):
+        stations = "\n".join([f"`{key}` - {info['name']}" for key, info in RADIO_STATIONS.items()])
+        await ctx.send(
+            embed=disnake.Embed(
+                title="Radio Stations",
+                description=f"Available stations:\n{stations}\n\nUse `>radio play <station>` to play a station.",
+                color=self.color,
+            )
+        )
+
+    @radio_group.command(name="play")
+    async def radio_play_prefix(self, ctx: commands.Context, *, station: str = None):
+        if not station:
+            stations = "\n".join([f"`{key}` - {info['name']}" for key, info in RADIO_STATIONS.items()])
+            await ctx.send(
+                embed=disnake.Embed(
+                    title="Radio Stations",
+                    description=f"Available stations:\n{stations}",
+                    color=self.color,
+                )
+            )
+            return
+        
+        station_key = station.lower()
+        if station_key not in RADIO_STATIONS:
+            await ctx.send(
+                embed=disnake.Embed(
+                    title="Station not found",
+                    description=f"Station `{station}` not available.",
+                    color=self.color,
+                )
+            )
+            return
+        
+        player = self._get_player(ctx.guild)
+        if not player:
+            ch = self._author_channel(ctx.author)
+            if not ch:
+                await ctx.send(
+                    embed=disnake.Embed(
+                        title="Error!",
+                        description="Join a voice channel first.",
+                        color=self.color,
+                    )
+                )
+                return
+            
+            if not self._check_restriction(ctx.guild, ch):
+                restricted_channel_id = self.db.get_restriction(ctx.guild.id)
+                restricted_channel = ctx.guild.get_channel(restricted_channel_id)
+                channel_name = restricted_channel.name if restricted_channel else "Unknown Channel"
+                await ctx.send(
+                    embed=disnake.Embed(
+                        title="Error!",
+                        description=f"The bot is restricted to {channel_name}. Please join that channel or use `>utils restrict` to change the restriction.",
+                        color=self.color,
+                    )
+                )
+                return
+            
+            await self._connect(ctx.guild, ch)
+            player = self._get_player(ctx.guild)
+        
+        station_info = RADIO_STATIONS[station_key]
+        try:
+            results = await player.fetch_tracks(station_info["url"])
+            if isinstance(results, list) and results:
+                track = results[0]
+                await player.set_volume(0)
+                await player.play(track, start_time=0)
+                self._current[ctx.guild.id] = track
+                self._current_req[ctx.guild.id] = getattr(ctx.author, "id", None)
+                self._last[ctx.guild.id] = track
+                await asyncio.sleep(5)
+                await player.set_volume(100)
+                await ctx.send(
+                    embed=disnake.Embed(
+                        title="Now Playing Radio",
+                        description=f"**{station_info['name']}**\n{station_info['description']}",
+                        color=self.color,
+                    )
+                )
+            else:
+                await ctx.send(
+                    embed=disnake.Embed(
+                        title="Radio Error",
+                        description=f"Could not connect to {station_info['name']}.",
+                        color=self.color,
+                    )
+                )
+        except Exception as e:
+            await ctx.send(
+                embed=disnake.Embed(
+                    title="Radio Error",
+                    description=f"Failed to play {station_info['name']}: {e}",
+                    color=self.color,
+                )
+            )
+
+    @commands.slash_command(name="radio", description="Radio controls", dm_permission=False)
+    async def radio_slash(self, inter: disnake.ApplicationCommandInteraction):
+        pass
+
+    @radio_slash.sub_command(name="play", description="Play a radio station")
+    async def radio_play_slash(self, inter: disnake.ApplicationCommandInteraction, station: str = None):
+        if not isinstance(inter.author, disnake.Member):
+            await inter.response.send_message(
+                embed=disnake.Embed(
+                    title="Error!", description="Guild only.", color=self.color
+                ),
+                ephemeral=True,
+            )
+            return
+        
+        if not station:
+            stations = "\n".join([f"`{key}` - {info['name']}" for key, info in RADIO_STATIONS.items()])
+            await inter.response.send_message(
+                embed=disnake.Embed(
+                    title="Radio Stations",
+                    description=f"Available stations:\n{stations}",
+                    color=self.color,
+                )
+            )
+            return
+        
+        station_key = station.lower()
+        if station_key not in RADIO_STATIONS:
+            await inter.response.send_message(
+                embed=disnake.Embed(
+                    title="Station not found",
+                    description=f"Station `{station}` not available.",
+                    color=self.color,
+                ),
+                ephemeral=True,
+            )
+            return
+        
+        player = self._get_player(inter.guild)
+        if not player:
+            ch = self._author_channel(inter.author)
+            if not ch:
+                await inter.response.send_message(
+                    embed=disnake.Embed(
+                        title="Error!",
+                        description="Join a voice channel first.",
+                        color=self.color,
+                    ),
+                    ephemeral=True,
+                )
+                return
+            
+            if not self._check_restriction(inter.guild, ch):
+                restricted_channel_id = self.db.get_restriction(inter.guild.id)
+                restricted_channel = inter.guild.get_channel(restricted_channel_id)
+                channel_name = restricted_channel.name if restricted_channel else "Unknown Channel"
+                await inter.response.send_message(
+                    embed=disnake.Embed(
+                        title="Error!",
+                        description=f"The bot is restricted to {channel_name}. Please join that channel or use `/utils restrict` to change the restriction.",
+                        color=self.color,
+                    ),
+                    ephemeral=True,
+                )
+                return
+            
+            await self._connect(inter.guild, ch)
+            player = self._get_player(inter.guild)
+        
+        station_info = RADIO_STATIONS[station_key]
+        try:
+            results = await player.fetch_tracks(station_info["url"])
+            if isinstance(results, list) and results:
+                track = results[0]
+                await player.set_volume(0)
+                await player.play(track, start_time=0)
+                self._current[inter.guild.id] = track
+                self._current_req[inter.guild.id] = getattr(inter.author, "id", None)
+                self._last[inter.guild.id] = track
+                await asyncio.sleep(5)
+                await player.set_volume(100)
+                await inter.response.send_message(
+                    embed=disnake.Embed(
+                        title="Now Playing Radio",
+                        description=f"**{station_info['name']}**\n{station_info['description']}",
+                        color=self.color,
+                    )
+                )
+            else:
+                await inter.response.send_message(
+                    embed=disnake.Embed(
+                        title="Radio Error",
+                        description=f"Could not connect to {station_info['name']}.",
+                        color=self.color,
+                    ),
+                    ephemeral=True,
+                )
+        except Exception as e:
+            await inter.response.send_message(
+                embed=disnake.Embed(
+                    title="Radio Error",
+                    description=f"Failed to play {station_info['name']}: {e}",
+                    color=self.color,
+                ),
+                ephemeral=True,
+            )
+
     @commands.Cog.listener()
     async def on_ready(self):
         if not self._synced:
@@ -873,5 +1092,3 @@ class Music(commands.Cog):
 
 def setup(bot):
     bot.add_cog(Music(bot))
-
-
